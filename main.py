@@ -1,6 +1,9 @@
+# TO DO
+# add a function to clear a playlist, connect to spotify API, transfer playlist, sort by albums and album position
 import os
 import pickle
 import re
+import json
 from datetime import datetime
 from datetime import timedelta
 from googleapiclient.discovery import build
@@ -25,7 +28,7 @@ def authenticate(scopes):
     with open(os.path.join(current_dir, 'api_key'), 'r') as file:
         api_key = file.read()
 
-    print(api_key)
+    # print(api_key)
     credentials = None
     if os.path.exists(os.path.join(current_dir, 'token.pickle')):
         print('Loading Credentials From File...')
@@ -55,10 +58,15 @@ def authenticate(scopes):
 
     return credentials
 
-def video_request(vid_id):
-    pass
+def load_frequency_config(config_filename):
+    current_directory = os.path.dirname(os.path.realpath(__file__))
+    if os.path.exists(os.path.join(current_directory, config_filename)):
+        with open(os.path.join(current_directory, config_filename), 'r') as config_file:
+            frequencies = json.load(config_file)
+            return frequencies
+    return None
 
-def get_playlist_videos(playlist_id, nextPageToken=None):
+def get_playlist_videos(youtube, playlist_id, nextPageToken=None):
     pl_request = youtube.playlistItems().list(
         part='contentDetails, snippet',
         playlistId=playlist_id,
@@ -68,26 +76,44 @@ def get_playlist_videos(playlist_id, nextPageToken=None):
     vid_ids = []
     for item in pl_response['items']:
         vid_ids.append(item['contentDetails']['videoId'])
-    nextPageToken = pl_response.get('nextPageToken')
     return pl_response, vid_ids
 
-def get_videos(vid_ids):
-    nextPageToken = get_playlist_response.get('nextPageToken')
+def get_videos(youtube, vid_ids):
     vid_request = youtube.videos().list(
         part="contentDetails, snippet, statistics",
         id=','.join(vid_ids))
     vid_response = vid_request.execute()
     return vid_response
 
-def get_song_info(items, video_list):
+def get_song_info(items, video_list, frequencies=None):
+    current_directory = os.path.dirname(os.path.realpath(__file__))
     for item in items:
-            # print(item['statistics']['viewCount'])
-            song_id = item['id']
-            yt_link = f'https://youtu.be/{song_id}'
-            song_title = item['snippet']['localized']['title']
-            artist = item['snippet']['tags'][0]
-            duration = item['contentDetails']['duration']
-            song_viewcount = int(item['statistics']['viewCount'])
+        # print(item['statistics']['viewCount'])
+        song_id = item['id']
+        yt_link = f'https://youtu.be/{song_id}'
+        song_title = item['snippet']['localized']['title']
+        artist = item['snippet']['tags'][0]
+        duration = item['contentDetails']['duration']
+        song_viewcount = int(item['statistics']['viewCount'])
+        if frequencies:
+            if song_id in frequencies:
+                song_list.append({'id': song_id, 'title': song_title, 
+                                'artist': artist, 'views': song_viewcount, 
+                                'link': yt_link, 'duration': duration, 
+                                'frequency':frequencies[song_id]['frequency']})
+            else: 
+                song_list.append({'id': song_id, 'title': song_title, 
+                                'artist': artist, 'views': song_viewcount, 
+                                'link': yt_link, 'duration': duration, 
+                                'frequency': 1})
+                
+                frequencies[song_id]['id'] = song_id
+                frequencies[song_id]['title'] = song_title
+                frequencies[song_id]['artist'] = artist
+                frequencies[song_id]['frequency'] = 1
+                with open(os.path.join(current_directory, config_filename), 'w') as config_file:
+                    json.dump(frequencies, config_file, indent=2)
+        else:
             song_list.append({'id': song_id, 'title': song_title, 
                             'artist': artist, 'views': song_viewcount, 
                             'link': yt_link, 'duration': duration})
@@ -107,18 +133,18 @@ def get_video_duration(duration):
                 hours=hours,
                 minutes=minutes,
                 seconds=seconds
-            ).total_seconds()
+            )
     return video_seconds
 
 def get_playlist_duration(items):
-    total_seconds = 0
+    total_seconds = timedelta(0)
     for item in items:
             duration = item['contentDetails']['duration']
             video_seconds = get_video_duration(duration)
             total_seconds += video_seconds
     return total_seconds
 
-def create_playlist(name, channel_id):
+def create_playlist(youtube, name, channel_id):
     create_playlist_request = youtube.playlists().insert(
     part='contentDetails, snippet',
     body={
@@ -131,7 +157,7 @@ def create_playlist(name, channel_id):
     # print(create_playlist_response)
     return playlist_id
 
-def add_videos_to_playlist(video_list, playlist_id):
+def add_videos_to_playlist(youtube, video_list, playlist_id, frequencies=None):
     for video in video_list:
         print(f'''{video['artist']}, {video['views']}, {video['title']} {video['id']}''')
         request_body = {
@@ -142,39 +168,54 @@ def add_videos_to_playlist(video_list, playlist_id):
                         'videoId': video['id']
                 }}
             }
-
+        
         add_video_request = youtube.playlistItems().insert(
-            part='snippet',
-            body = request_body
-        )
-        add_video_response = add_video_request.execute()
+        part='snippet',
+        body = request_body)
+        responses = []
+        if frequencies:
+            for _ in range(int(frequencies[video['id']]['frequency'])):
+                add_video_response = add_video_request.execute()
+                responses.append(add_video_response)
+        else:
+            add_video_response = add_video_request.execute()
+            responses.append(add_video_response)
+    return responses
+
+def clear_playlist(playlist_id):
+    pass
 
 
-# scopes = ['https://www.googleapis.com/auth/youtube.readonly']
-scopes = ['https://www.googleapis.com/auth/youtube']
-channel_id = 'UCpRrrf9yZQi6Uyc8iRxv47Q'
-base_playlist_id = 'PLhrHTD00aJrFJXg94UJoz-EexjH51C5eI'
-new_playlist_name = 'test'
-credentials = authenticate(scopes)
-youtube = build('youtube', 'v3', credentials=credentials)
-total_seconds = 0
-nextPageToken = None
-song_list = []
+if __name__ == '__main__':
+    # scopes = ['https://www.googleapis.com/auth/youtube.readonly']
+    scopes = ['https://www.googleapis.com/auth/youtube']
+    channel_id = 'UCpRrrf9yZQi6Uyc8iRxv47Q'
+    base_playlist_id = 'PLhrHTD00aJrGuNvXuHfePhtbgcCV2qvK2'
+    new_playlist_name = 'test'
+    config_filename = 'config.txt'
+    total_time = timedelta(0)
+    nextPageToken = None
+    song_list = []
+    current_directory = os.path.join(os.path.dirname(os.path.realpath(__file__)))
 
-while True:
-    get_playlist_response, vid_ids = get_playlist_videos(playlist_id=base_playlist_id)
-    videos_response = get_videos(vid_ids)
-    total_seconds = get_playlist_duration(videos_response['items'])
-    song_list = get_song_info(videos_response['items'], song_list, total_seconds)
-    if not nextPageToken:
-        break
-
-total_seconds = int(total_seconds)
-total_time = datetime.fromtimestamp(total_seconds)
-
-print(f'{total_time.hour}:{total_time.minute}:{total_time.second}')
-print(len(song_list))
-
-song_list.sort(key=lambda x:(x['artist'], reversor(x['views']), x['title']))
-playlist_id = create_playlist(new_playlist_name, channel_id)
-add_videos_to_playlist(song_list, playlist_id)
+    credentials = authenticate(scopes)
+    youtube = build('youtube', 'v3', credentials=credentials)
+    frequencies = load_frequency_config(config_filename)
+    while True:
+        get_playlist_videos_response, vid_ids = get_playlist_videos(youtube, playlist_id=base_playlist_id, nextPageToken=nextPageToken)
+        nextPageToken = get_playlist_videos_response.get('nextPageToken')
+        videos_response = get_videos(youtube, vid_ids)
+        total_time += get_playlist_duration(videos_response['items'])
+        song_list = get_song_info(videos_response['items'], song_list, frequencies)
+        if not nextPageToken:
+            break
+    
+    hours, remainder = divmod(total_time.seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    print(f'{hours}:{minutes}:{seconds}')
+    print(len(song_list))
+  
+    song_list.sort(key=lambda x:(x['artist'], reversor(x['views']), x['title']))
+    playlist_id = create_playlist(youtube, new_playlist_name, channel_id)
+    print('created a playlist: {playlist_id}')
+    add_videos_to_playlist(youtube, song_list, playlist_id, frequencies)
