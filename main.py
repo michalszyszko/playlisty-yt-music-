@@ -190,7 +190,7 @@ if __name__ == '__main__':
     # scopes = ['https://www.googleapis.com/auth/youtube.readonly']
     scopes = ['https://www.googleapis.com/auth/youtube']
     channel_id = 'UCpRrrf9yZQi6Uyc8iRxv47Q'
-    base_playlist_id = 'PLhrHTD00aJrGuNvXuHfePhtbgcCV2qvK2'
+    base_playlist_id = 'PLhrHTD00aJrFJXg94UJoz-EexjH51C5eI'
     new_playlist_name = 'test'
     config_filename = 'config.txt'
     total_time = timedelta(0)
@@ -206,7 +206,7 @@ if __name__ == '__main__':
         nextPageToken = get_playlist_videos_response.get('nextPageToken')
         videos_response = get_videos(youtube, vid_ids)
         total_time += get_playlist_duration(videos_response['items'])
-        song_list = get_song_info(videos_response['items'], song_list, frequencies)
+        song_list = get_song_info(videos_response['items'], song_list, frequencies=None)
         if not nextPageToken:
             break
     
@@ -217,5 +217,5 @@ if __name__ == '__main__':
   
     song_list.sort(key=lambda x:(x['artist'], reversor(x['views']), x['title']))
     playlist_id = create_playlist(youtube, new_playlist_name, channel_id)
-    print('created a playlist: {playlist_id}')
-    add_videos_to_playlist(youtube, song_list, playlist_id, frequencies)
+    print(f'created a playlist: {playlist_id}')
+    add_videos_to_playlist(youtube, song_list, playlist_id, frequencies=None)
