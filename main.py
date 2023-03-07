@@ -1,9 +1,12 @@
 # TO DO
 # add a function to clear a playlist, connect to spotify API, transfer playlist, sort by albums and album position
 import os
+import requests
+import urllib.parse
 import pickle
 import re
 import json
+from pprint import pprint
 from datetime import datetime
 from datetime import timedelta
 from googleapiclient.discovery import build
@@ -85,7 +88,7 @@ def get_videos(youtube, vid_ids):
     vid_response = vid_request.execute()
     return vid_response
 
-def get_song_info(items, video_list, frequencies=None):
+def get_song_info_youtube(items, video_list, frequencies=None):
     current_directory = os.path.dirname(os.path.realpath(__file__))
     for item in items:
         # print(item['statistics']['viewCount'])
@@ -118,6 +121,70 @@ def get_song_info(items, video_list, frequencies=None):
                             'artist': artist, 'views': song_viewcount, 
                             'link': yt_link, 'duration': duration})
     return video_list
+
+def get_song_info_spotify(song_info):
+    # pprint(song_info)
+    search_url = 'https://api.spotify.com/v1/search'
+    client_id = 'a1207442b6e94da2b337583fa004fd03'
+    client_secret = '75824cc5047b4dc496bb1fe74729a9f7'
+    auth_url = 'https://accounts.spotify.com/api/token'
+    get_track_url = 'https://api.spotify.com/v1/tracks'
+    get_album_url = 'https://api.spotify.com/v1/albums'
+
+    auth_response = requests.post(auth_url, {
+        'grant_type': 'client_credentials',
+        'client_id': client_id,
+        'client_secret': client_secret,
+    })
+
+    auth_response_data = auth_response.json()
+    access_token = auth_response_data['access_token']
+    # print(access_token)
+    headers = {
+    'Authorization': 'Bearer {token}'.format(token=access_token)
+    }
+    for song in song_info:
+        try:
+            track_query = f'''{song['title']} {song['artist']}'''
+            find_track_url = f'https://api.spotify.com/v1/search?query={urllib.parse.quote(track_query)}&type=track&locale=en-US%2Cen%3Bq%3D0.5&offset=0&limit=5'
+            find_track_response = requests.get(f'{find_track_url}', headers=headers)
+            find_track_response = find_track_response.json()
+            track_id = find_track_response['tracks']['items'][0]['id']
+            track_name = find_track_response['tracks']['items'][0]['name']
+            # print(find_track_response['tracks']['items'][0]['external_urls'])
+            # print(track_name)
+            # print(track_id)
+
+            get_track_response = requests.get(f'{get_track_url}/{track_id}', headers=headers)
+            get_track_response = get_track_response.json()
+            # print(get_track_response.keys())
+            song_name = get_track_response['name']
+            artist = get_track_response['artists'][0]['name']
+            album_name = get_track_response['album']['name']
+            album_uri = get_track_response['album']['uri'].split(':')[-1]
+
+            get_album_response = requests.get(f'{get_album_url}/{album_uri}', headers=headers)
+            get_album_response = get_album_response.json()
+            # print(get_album_response)
+            # print(get_album_response.keys())    
+            # print(get_album_response['tracks'])
+            # print(get_album_response['tracks'].keys())
+            song_index = -1
+            for n, item in enumerate(get_album_response['tracks']['items'], 1):
+                if item['name'] == song_name:
+                    song_index = n
+        except:
+            print(f'''Error retrieving song data through spotify api. Song title: {song['title']}''')
+
+        # print(song_name)
+        # print(artist)
+        # print(album_name)
+        # print(song_index)
+        song['album_name'] = album_name
+        song['song_index'] = song_index
+        print(f'''{song['title']} {song['artist']} {song['album_name']} {song_index}''')
+    
+    return song_info
 
 def get_video_duration(duration):
     hours_pattern = re.compile(r'(\d+)H')
@@ -206,7 +273,9 @@ if __name__ == '__main__':
         nextPageToken = get_playlist_videos_response.get('nextPageToken')
         videos_response = get_videos(youtube, vid_ids)
         total_time += get_playlist_duration(videos_response['items'])
-        song_list = get_song_info(videos_response['items'], song_list, frequencies=None)
+        song_list = get_song_info_youtube(videos_response['items'], song_list, frequencies=None)
+        song_list = get_song_info_spotify(song_list)
+        # pprint(song_list)
         if not nextPageToken:
             break
     
@@ -215,7 +284,7 @@ if __name__ == '__main__':
     print(f'{hours}:{minutes}:{seconds}')
     print(len(song_list))
   
-    song_list.sort(key=lambda x:(x['artist'], reversor(x['views']), x['title']))
+    song_list.sort(key=lambda x:(x['artist'], x['album_name'], x['song_index'], reversor(x['views']), x['title']))
     playlist_id = create_playlist(youtube, new_playlist_name, channel_id)
     print(f'created a playlist: {playlist_id}')
     add_videos_to_playlist(youtube, song_list, playlist_id, frequencies=None)
